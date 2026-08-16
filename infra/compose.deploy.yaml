@@ -111,7 +111,9 @@ services:
     restart: unless-stopped
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
-      NGINX_ENVSUBST_FILTER: ^APP_DOMAIN$
+      APP_WWW_DOMAIN: ${APP_WWW_DOMAIN:?APP_WWW_DOMAIN is required}
+      LEGACY_APP_DOMAIN: ${LEGACY_APP_DOMAIN:?LEGACY_APP_DOMAIN is required}
+      NGINX_ENVSUBST_FILTER: ^(APP_DOMAIN|APP_WWW_DOMAIN|LEGACY_APP_DOMAIN)$
     ports:
       - "80:80"
       - "443:443"

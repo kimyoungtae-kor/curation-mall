@@ -118,7 +118,7 @@ https://shop.example.com/media/  -> Spring Boot StorageService
 
 ```text
 Internet :80/:443
-        -> Nginx (TLS 종료, 기본 보안 헤더, 공개 인증 API 속도 제한)
+        -> Nginx (대표 도메인 TLS 종료, 별칭 301 이동, 기본 보안 헤더, 공개 인증 API 속도 제한)
            ├─ /        -> Next.js standalone :3000
            ├─ /api/**  -> Spring Boot stage :8080
            └─ /media/**-> Spring Boot stage :8080
@@ -131,6 +131,7 @@ Spring Boot -> PostgreSQL :5432
 - stage는 시뮬레이션 결제임을 명시하며 `local` 프로필과 공개된 데모 회원·관리자 seed를 사용하지 않는다.
 - 새 DB에는 Flyway 적용 후 가상 카탈로그·머천다이징 데이터만 수동 적재한다. 관리자는 강한 비밀번호로 직접 가입한 뒤 일회성 역할 변경으로 만든다.
 - 컨테이너 메모리 상한과 로그 회전을 적용하고, 빌드는 4GiB 호스트의 자원 경합을 줄이기 위해 백엔드와 프론트를 순차 실행한다.
+- 대표 주소는 `zabre-mall.com` 하나로 고정하고 `www.zabre-mall.com`과 이전 주소 `mall.cozysignal.com`은 경로·쿼리를 보존해 301로 이동한다. 프론트 API 기준 주소와 CORS도 대표 주소만 사용한다.
 - 실제 실행·인증서·백업 절차는 `docs/10_EC2_DEPLOYMENT_RUNBOOK.md`를 따른다.
 
 ## 5. 인증·인가와 쿠키

@@ -233,7 +233,9 @@ archive에는 Git 메타데이터가 없으므로 preflight가 경고를 표시�
 
 두 random 결과는 각각 PostgreSQL 비밀번호와 guest 조회 토큰 비밀값에 넣으며 서로 달라야 합니다. 다음 값도 실제 값으로 바꿉니다.
 
-- APP_DOMAIN: https://가 없는 호스트 이름
+- APP_DOMAIN: `https://`가 없는 대표 호스트 이름
+- APP_WWW_DOMAIN: 대표 주소로 301 이동할 `www` 호스트 이름
+- LEGACY_APP_DOMAIN: 대표 주소로 301 이동할 이전 호스트 이름
 - CERTBOT_EMAIL: 인증서 만료 알림을 받을 실제 이메일
 - POSTGRES_PASSWORD: 첫 번째 64자리 random 값
 - GUEST_LOOKUP_TOKEN_SECRET: 두 번째 64자리 random 값
@@ -279,6 +281,7 @@ R__seed_demo_identity.sql과 R__seed_demo_orders.sql은 실행하지 않습니�
 다음을 다시 확인합니다.
 
 - DNS A 레코드가 이 EC2 EIP를 가리킴
+- `APP_WWW_DOMAIN`과 `LEGACY_APP_DOMAIN`도 이 EC2로 해석됨
 - 보안 그룹 80과 443이 열림
 - 다른 프로그램이 호스트 80을 사용하지 않음
 
@@ -286,7 +289,7 @@ R__seed_demo_identity.sql과 R__seed_demo_orders.sql은 실행하지 않습니�
 
     bash scripts/deploy/init-tls.sh
 
-스크립트는 proxy를 중지한 상태에서 tools profile의 Certbot standalone을 포트 80에 잠시 실행합니다. 인증서 발급이 성공하면 proxy를 시작하고 HTTPS API 상태를 확인합니다.
+스크립트는 proxy를 중지한 상태에서 tools profile의 Certbot standalone을 포트 80에 잠시 실행합니다. 대표·www는 대표 인증서에 함께 넣고, 이전 주소의 인증서가 없을 때는 리다이렉트용 인증서를 별도로 발급합니다. 인증서 발급이 성공하면 proxy를 시작하고 대표 주소의 HTTPS API 상태를 확인합니다.
 
     curl -fsS https://shop.your-domain.com/api/v1/health
     curl -I https://shop.your-domain.com/
@@ -361,6 +364,8 @@ R__seed_demo_identity.sql과 R__seed_demo_orders.sql은 실행하지 않습니�
     bash scripts/deploy/renew-tls.sh
 
 standalone 방식은 포트 80을 사용해야 해서 proxy가 잠시 중지됩니다. 스크립트는 실행 전 proxy 상태를 기억하고, 성공 또는 실패 후 원래 실행 상태로 돌립니다. Certbot은 갱신 시점이 아닐 때 인증서를 다시 발급하지 않습니다.
+
+갱신 스크립트는 대표·www 인증서와 이전 주소 인증서를 한 번에 확인합니다. `certbot certificates`에서 두 인증서와 각 도메인 이름을 확인합니다.
 
 하루 한 번 새벽 cron 예:
 

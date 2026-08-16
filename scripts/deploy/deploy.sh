@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/common.sh"
 bash "${SCRIPT_DIR}/preflight.sh"
 
 app_domain="$(deploy_read_env APP_DOMAIN)"
+legacy_app_domain="$(deploy_read_env LEGACY_APP_DOMAIN)"
 
 deploy_info "Building the backend first to avoid parallel-build memory pressure"
 "${DEPLOY_COMPOSE[@]}" build --pull backend
@@ -17,8 +18,9 @@ deploy_info "Building the frontend second"
 deploy_info "Starting PostgreSQL, backend, and frontend"
 "${DEPLOY_COMPOSE[@]}" up -d --wait --wait-timeout 240 postgres backend frontend
 
-if deploy_certificate_exists "${app_domain}"; then
-  deploy_info "Existing TLS certificate found; starting the HTTPS proxy"
+if deploy_certificate_exists "${app_domain}" \
+    && deploy_certificate_exists "${legacy_app_domain}"; then
+  deploy_info "Primary and legacy TLS certificates found; starting the HTTPS proxy"
   "${DEPLOY_COMPOSE[@]}" up -d --wait --wait-timeout 90 proxy
 
   deploy_info "Checking public HTTPS and database-backed API health"
@@ -34,7 +36,7 @@ if deploy_certificate_exists "${app_domain}"; then
     sleep 5
   done
 else
-  deploy_warn "No certificate exists yet, so the proxy was not started."
+  deploy_warn "A required primary or legacy certificate is missing, so the proxy was not started."
   printf '\nNext step after DNS points to this EC2 and ports 80/443 are open:\n  %s\n\n' \
     "bash ${SCRIPT_DIR}/init-tls.sh"
 fi

@@ -38,12 +38,15 @@ deploy_read_env() {
 }
 
 deploy_validate_environment() {
-  local app_domain certbot_email postgres_db postgres_user postgres_password
+  local app_domain app_www_domain legacy_app_domain certbot_email
+  local postgres_db postgres_user postgres_password
   local guest_secret
 
   [[ -f "${DEPLOY_COMPOSE_FILE}" ]] || deploy_die "Missing ${DEPLOY_COMPOSE_FILE}."
 
   app_domain="$(deploy_read_env APP_DOMAIN)"
+  app_www_domain="$(deploy_read_env APP_WWW_DOMAIN)"
+  legacy_app_domain="$(deploy_read_env LEGACY_APP_DOMAIN)"
   certbot_email="$(deploy_read_env CERTBOT_EMAIL)"
   postgres_db="$(deploy_read_env POSTGRES_DB)"
   postgres_user="$(deploy_read_env POSTGRES_USER)"
@@ -54,6 +57,18 @@ deploy_validate_environment() {
     || deploy_die "APP_DOMAIN must be a hostname without a scheme or path."
   [[ "${app_domain}" != "shop.example.com" && "${app_domain}" == *.* ]] \
     || deploy_die "Replace the APP_DOMAIN placeholder with a real DNS name."
+  [[ "${app_www_domain}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] \
+    || deploy_die "APP_WWW_DOMAIN must be a hostname without a scheme or path."
+  [[ "${app_www_domain}" != "www.shop.example.com" && "${app_www_domain}" == *.* ]] \
+    || deploy_die "Replace the APP_WWW_DOMAIN placeholder with a real DNS name."
+  [[ "${legacy_app_domain}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] \
+    || deploy_die "LEGACY_APP_DOMAIN must be a hostname without a scheme or path."
+  [[ "${legacy_app_domain}" != "legacy-shop.example.com" && "${legacy_app_domain}" == *.* ]] \
+    || deploy_die "Replace the LEGACY_APP_DOMAIN placeholder with a real DNS name."
+  [[ "${app_domain}" != "${app_www_domain}" \
+      && "${app_domain}" != "${legacy_app_domain}" \
+      && "${app_www_domain}" != "${legacy_app_domain}" ]] \
+    || deploy_die "APP_DOMAIN, APP_WWW_DOMAIN, and LEGACY_APP_DOMAIN must be different hostnames."
   [[ "${certbot_email}" == *@*.* && "${certbot_email}" != *"example.com" ]] \
     || deploy_die "Replace CERTBOT_EMAIL with a real mailbox."
   [[ "${postgres_db}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \

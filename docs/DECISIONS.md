@@ -234,13 +234,15 @@
 
 ### U-005 — 실제 도메인과 시연 URL
 
-- 상태: 기본 도메인과 DNS 제공자는 확인, 공개 호스트명 미결정
-- 부분 결정일: 2026-08-15
-- 확인 사항: `cozysignal.com`을 보유하고 Cloudflare에서 DNS를 관리한다.
-- 권장 후보: 쇼핑몰 시연은 `pet.cozysignal.com`을 사용해 루트 도메인을 전체 포트폴리오에 남긴다.
-- 최초 배포 원칙: EIP를 A 레코드에 연결하고 Let's Encrypt 발급·직접 HTTPS 검증까지 Cloudflare `DNS only`를 유지한다. 프록시 사용은 `Full (strict)`와 실제 접속자 IP 전달을 구성한 뒤 재검토한다.
-- 작업 순서: EIP는 소스 전달·이미지 빌드에는 필수가 아니므로 DNS·TLS 직전에 할당하고 즉시 EC2에 연결한다. 실행 중 자동 퍼블릭 IPv4와 EIP는 모두 동일한 AWS 퍼블릭 IPv4 과금 대상이므로 유휴 EIP를 미리 할당해 두지 않는다.
-- 완료 조건: 공개 호스트명을 확정하고 DNS, 인증서 자동 갱신과 외부 HTTPS 시연을 검증한다.
+- 상태: 대표 호스트 변경 결정, EC2 전환·EIP·자동 갱신 검증 대기
+- 부분 결정일: 2026-08-16
+- 확인 사항: `cozysignal.com`과 `zabre-mall.com`의 DNS를 Cloudflare에서 관리한다.
+- stage 대표 호스트명: `zabre-mall.com`. `www.zabre-mall.com`과 기존 `mall.cozysignal.com`은 대표 주소로 301 이동한다.
+- 최초 공개: 제한된 외부 QA 마감에 맞춰 현재 자동 퍼블릭 IPv4를 A 레코드에 연결하고 Cloudflare `DNS only` 상태에서 Let's Encrypt와 직접 HTTPS를 검증했다.
+- 도메인 전환: 새 대표·www DNS를 같은 EC2에 연결하고 두 이름의 Let's Encrypt 인증서를 발급했다. 기존 `mall.cozysignal.com` 인증서는 리다이렉트 서버에서 계속 사용하고 두 인증서를 함께 갱신한다.
+- 임시 제약: EIP 전환 전에는 EC2 stop/start 시 주소가 바뀌므로 인스턴스를 중지하지 않고, EIP 연결 직후 Cloudflare A 레코드를 새 주소로 갱신한다.
+- 프록시 사용: `Full (strict)`와 실제 접속자 IP 전달을 구성한 뒤 재검토한다.
+- 완료 조건: EIP 전환, 인증서 자동 갱신과 외부 전체 시연을 검증한다.
 
 ## 재검토 대기 사항
 
@@ -288,3 +290,4 @@
 | 2026-08-13 | 찜을 고객 회원 전용으로 전환하고 모바일 카테고리·히어로 탐색을 보강 |
 | 2026-08-13 | 신규 회원가입은 빈 회원 데이터로 시작하고 기존 고객 로그인에만 방문자 장바구니 병합 적용 |
 | 2026-08-15 | 저비용 포트폴리오 stage를 단일 EC2 `t3a.medium` Docker Compose 후보로 결정 |
+| 2026-08-16 | stage 대표 주소를 `zabre-mall.com`으로 변경하고 www·이전 주소는 301 이동하기로 결정 |
