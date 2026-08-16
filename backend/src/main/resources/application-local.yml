@@ -1,0 +1,18 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pet_curation}
+    username: ${SPRING_DATASOURCE_USERNAME:pet_curation}
+    password: ${SPRING_DATASOURCE_PASSWORD:local-development-only}
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed
+
+app:
+  storage:
+    root: ${MEDIA_STORAGE_ROOT:../media}
+  payment:
+    simulated-enabled: true
+  order:
+    guest-lookup-token-secret: ${GUEST_LOOKUP_TOKEN_SECRET:local-only-guest-lookup-token-secret-2026-change-before-deploy}

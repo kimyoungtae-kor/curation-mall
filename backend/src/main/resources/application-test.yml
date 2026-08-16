@@ -1,0 +1,14 @@
+spring:
+  config:
+    activate:
+      on-profile: test
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed
+
+app:
+  storage:
+    root: ${MEDIA_STORAGE_ROOT:../media}
+  payment:
+    simulated-enabled: true
+  order:
+    guest-lookup-token-secret: test-only-guest-lookup-token-secret-2026-never-deploy

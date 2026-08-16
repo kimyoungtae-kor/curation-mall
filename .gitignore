@@ -1,0 +1,89 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+!.env.deploy.example
+
+# Local AI/coding-agent context (do not publish)
+AGENTS.md
+**/AGENTS.md
+CLAUDE.md
+**/CLAUDE.md
+.agents/
+.codex/
+.codex_tmp/
+.openai/
+.claude/
+.cursor/
+.cursorrules
+.windsurf/
+.windsurfrules
+.github/copilot-instructions.md
+
+# Private work-continuity notes (public docs live elsewhere under docs/)
+docs/PROJECT_CONTEXT.md
+docs/CURRENT_STATUS.md
+docs/SESSION_LOG.md
+
+# Credentials and private keys
+.secrets/
+secrets/
+.aws/
+.ssh/
+.cloudflare/
+.cloudflared/
+.wrangler/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ovpn
+id_rsa*
+id_ed25519*
+credentials*.json
+service-account*.json
+application-secrets*.yml
+application-secrets*.yaml
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+!*.tfvars.example
+**/playwright/.auth/
+**/storage-state*.json
+**/auth-state*.json
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/*.tsbuildinfo
+
+# Backend
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+.maven-home/
+*.class
+
+# Runtime data
+uploads/
+data/
+backups/
+*.dump
+*.dump.sha256
+*.log
+
+# IDE and operating system
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini

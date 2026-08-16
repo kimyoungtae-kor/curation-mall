@@ -1,0 +1,22 @@
+spring:
+  config:
+    activate:
+      on-profile: stage
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
+app:
+  visitor-cookie:
+    secure: true
+  storage:
+    root: ${MEDIA_STORAGE_ROOT}
+  payment:
+    simulated-enabled: ${SIMULATED_PAYMENT_ENABLED:true}
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true

@@ -1,0 +1,20 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
+app:
+  visitor-cookie:
+    secure: true
+  storage:
+    root: ${MEDIA_STORAGE_ROOT}
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true
