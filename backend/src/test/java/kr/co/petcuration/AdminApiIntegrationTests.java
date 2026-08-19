@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -91,6 +92,70 @@ class AdminApiIntegrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM admin_audit_logs WHERE admin_user_id = '11000000-0000-0000-0000-000000000002'
                 """, Long.class)).isEqualTo(2L);
+    }
+
+    @Test
+    void publishedProductsRequireAtLeastOneExistingCanonicalImage() throws Exception {
+        AuthState admin = login("admin@example.com");
+
+        mockMvc.perform(withCsrf(post("/api/v1/admin/products")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content(productBody("published-without-image", "PUBLISHED", "[]")), admin.csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        mockMvc.perform(withCsrf(post("/api/v1/admin/products")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content(productBody("draft-invalid-image-key", "DRAFT", """
+                                [{"storageKey":"/demo/catalog/oasis-water-bowl.webp","alt":"대표 이미지","sortOrder":1}]
+                                """)), admin.csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        mockMvc.perform(withCsrf(post("/api/v1/admin/products")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content(productBody("draft-missing-image", "DRAFT", """
+                                [{"storageKey":"uploads/products/2026/08/missing.webp","alt":"대표 이미지","sortOrder":1}]
+                                """)), admin.csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        mockMvc.perform(withCsrf(post("/api/v1/admin/products")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content(productBody("published-with-image", "PUBLISHED", """
+                                [{"storageKey":"demo/catalog/oasis-water-bowl.webp","alt":"대표 이미지","sortOrder":1}]
+                                """)), admin.csrf()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.status").value("PUBLISHED"))
+                .andExpect(jsonPath("$.data.images.length()").value(1));
+    }
+
+    @Test
+    void productRejectsMoreThanEightImagesAndCannotPublishStoredImageCountZero() throws Exception {
+        AuthState admin = login("admin@example.com");
+        String nineImages = java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(index -> """
+                        {"storageKey":"demo/catalog/oasis-water-bowl.webp","alt":"이미지 %d","sortOrder":%d}
+                        """.formatted(index, index))
+                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        mockMvc.perform(withCsrf(post("/api/v1/admin/products")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content(productBody("too-many-images", "DRAFT", nineImages)), admin.csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("images"))
+                .andExpect(jsonPath("$.fieldErrors[0].code").value("Size"));
+
+        UUID productId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO products (id, brand_id, slug, name, status, attributes, featured)
+                VALUES (?, '20000000-0000-0000-0000-000000000001', ?, '이미지 없는 초안', 'DRAFT', '{}'::jsonb, false)
+                """, productId, "draft-no-image-" + productId);
+        mockMvc.perform(withCsrf(patch("/api/v1/admin/products/" + productId + "/status")
+                        .cookie(admin.session()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"PUBLISHED\",\"version\":0}"), admin.csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -243,6 +308,27 @@ class AdminApiIntegrationTests {
         mockMvc.perform(get("/api/v1/home"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.serviceGuide.links.length()").value(3));
+    }
+
+    private String productBody(String slug, String productStatus, String images) {
+        return """
+                {
+                  "brandId":"20000000-0000-0000-0000-000000000001",
+                  "slug":"%s",
+                  "name":"관리자 이미지 검증 상품",
+                  "summary":"이미지 검증",
+                  "description":"관리자 상품 이미지 규칙을 검증합니다.",
+                  "status":"%s",
+                  "featured":false,
+                  "categoryIds":["40000000-0000-0000-0000-000000000005"],
+                  "speciesIds":["30000000-0000-0000-0000-000000000001"],
+                  "variants":[{
+                    "sku":"%s-SKU","optionLabel":"기본 옵션","price":19000,
+                    "stockQuantity":5,"status":"ACTIVE","sortOrder":10
+                  }],
+                  "images":%s
+                }
+                """.formatted(slug, productStatus, slug.toUpperCase(), images);
     }
 
     private AuthState login(String email) throws Exception {

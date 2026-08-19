@@ -53,7 +53,12 @@ services:
     expose:
       - "8080"
     volumes:
-      - ../media:/srv/media:ro
+      - type: bind
+        source: ${MEDIA_HOST_PATH:?MEDIA_HOST_PATH is required}
+        target: /srv/media
+        read_only: false
+        bind:
+          create_host_path: false
     depends_on:
       postgres:
         condition: service_healthy

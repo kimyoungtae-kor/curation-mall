@@ -64,7 +64,7 @@ public final class AdminApiModels {
             List<UUID> categoryIds,
             List<UUID> speciesIds,
             @Valid @NotEmpty List<VariantInput> variants,
-            @Valid List<ImageInput> images,
+            @Valid @Size(max = 8) List<ImageInput> images,
             Long version
     ) {
     }
@@ -102,6 +102,16 @@ public final class AdminApiModels {
     }
 
     public record Image(UUID id, String storageKey, String alt, int sortOrder) {
+    }
+
+    public record MediaUpload(
+            String storageKey,
+            String url,
+            String contentType,
+            long sizeBytes,
+            int width,
+            int height
+    ) {
     }
 
     public record StatusRequest(@NotBlank String status, @NotNull Long version) {

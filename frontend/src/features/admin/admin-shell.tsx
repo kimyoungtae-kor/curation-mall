@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useAuth } from "@/features/account/auth-provider";
+import { AdminBrand } from "./admin-brand";
 
 const navigation = [
   { href: "/admin", label: "대시보드", exact: true },
@@ -80,13 +81,7 @@ export function AdminGuard({ title, description, actions, children }: AdminGuard
   return (
     <div className="admin-layout">
       <aside className="admin-sidebar">
-        <Link className="admin-brand" href="/admin">
-          <span aria-hidden="true">P</span>
-          <div>
-            <strong>PET CURATION</strong>
-            <small>ADMIN CONSOLE</small>
-          </div>
-        </Link>
+        <AdminBrand />
         <nav className="admin-nav" aria-label="관리자 메뉴">
           {navigation.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);

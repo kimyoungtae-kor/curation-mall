@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -121,6 +123,36 @@ public class GlobalExceptionHandler {
                 idempotency
                         ? "주문 생성과 결제 확인 요청에 UUID 형식 Idempotency-Key 헤더를 보내 주세요."
                         : exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiErrorResponse> handleUploadTooLarge(
+            MaxUploadSizeExceededException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "IMAGE_FILE_TOO_LARGE",
+                "이미지 파일이 너무 큽니다.",
+                "이미지는 한 장당 최대 8MB, 요청당 최대 10MB까지 업로드할 수 있습니다.",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    ResponseEntity<ApiErrorResponse> handleMissingRequestPart(
+            MissingServletRequestPartException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.BAD_REQUEST,
+                "IMAGE_REQUIRED",
+                "이미지 파일이 필요합니다.",
+                "multipart/form-data의 file 항목에 이미지를 첨부해 주세요.",
                 request,
                 List.of()
         );

@@ -1,11 +1,14 @@
 package kr.co.petcuration.admin.application;
 
 import java.sql.Timestamp;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import kr.co.petcuration.admin.api.AdminApiModels;
 import kr.co.petcuration.admin.api.AdminApiModels.AdminOrderDetail;
 import kr.co.petcuration.admin.api.AdminApiModels.AdminOrderSummary;
@@ -24,11 +27,14 @@ import kr.co.petcuration.admin.api.AdminApiModels.TransitionRequest;
 import kr.co.petcuration.admin.api.AdminApiModels.UserSummary;
 import kr.co.petcuration.admin.api.AdminApiModels.Variant;
 import kr.co.petcuration.common.api.ApiException;
+import kr.co.petcuration.common.storage.StorageService;
 import kr.co.petcuration.merchandising.domain.HomeSectionKey;
 import kr.co.petcuration.merchandising.domain.MerchandisingLinkType;
 import kr.co.petcuration.order.api.OrderApiModels.PageMetadata;
 import kr.co.petcuration.order.application.OrderService;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -42,15 +48,23 @@ public class AdminService {
 
     private static final Set<String> PRODUCT_STATUSES = Set.of("DRAFT", "PUBLISHED", "HIDDEN", "DISCONTINUED");
     private static final Set<String> VARIANT_STATUSES = Set.of("ACTIVE", "INACTIVE");
+    private static final Pattern SAFE_STORAGE_KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]*");
 
     private final JdbcTemplate jdbcTemplate;
     private final OrderService orderService;
     private final ObjectMapper objectMapper;
+    private final StorageService storageService;
 
-    public AdminService(JdbcTemplate jdbcTemplate, OrderService orderService, ObjectMapper objectMapper) {
+    public AdminService(
+            JdbcTemplate jdbcTemplate,
+            OrderService orderService,
+            ObjectMapper objectMapper,
+            StorageService storageService
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.orderService = orderService;
         this.objectMapper = objectMapper;
+        this.storageService = storageService;
     }
 
     @Transactional(readOnly = true)
@@ -150,10 +164,136 @@ public class AdminService {
     }
 
     @Transactional
+    public void deleteProduct(UUID productId, Long version, boolean confirmOrderHistory, UUID adminId) {
+        if (version == null) {
+            throw validation("version이 필요합니다.");
+        }
+
+        List<ProductDeletionTarget> targets = jdbcTemplate.query("""
+                SELECT id, slug, name, status, version
+                  FROM products
+                 WHERE id = ?
+                   FOR NO KEY UPDATE
+                """, (rs, rowNum) -> new ProductDeletionTarget(
+                rs.getObject("id", UUID.class),
+                rs.getString("slug"),
+                rs.getString("name"),
+                rs.getString("status"),
+                rs.getLong("version")
+        ), productId);
+        if (targets.isEmpty()) {
+            throw notFound("상품");
+        }
+
+        ProductDeletionTarget target = targets.getFirst();
+        if (target.version() != version) {
+            throw optimisticConflict();
+        }
+        if (target.status().equals("PUBLISHED")) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "PRODUCT_MUST_BE_UNPUBLISHED",
+                    "판매 중인 상품은 삭제할 수 없습니다.",
+                    "먼저 상품을 숨김 또는 판매 종료 상태로 변경한 뒤 다시 시도해 주세요."
+            );
+        }
+        if (hasHomeProductLink(target.slug())) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "PRODUCT_IN_USE",
+                    "홈 콘텐츠에서 사용 중인 상품입니다.",
+                    "홈의 상품 직접 링크를 다른 대상으로 변경한 뒤 다시 시도해 주세요."
+            );
+        }
+
+        // Order creation locks cart items before updating variants. Deletion uses the same
+        // deterministic cart -> variant order so an in-flight checkout cannot form a lock cycle.
+        // The product's NO KEY UPDATE lock remains compatible with the order's foreign-key check.
+        List<UUID> cartItemIds = jdbcTemplate.query("""
+                SELECT ci.id
+                  FROM cart_items ci
+                  JOIN product_variants pv ON pv.id = ci.variant_id
+                 WHERE pv.product_id = ?
+                 ORDER BY ci.id
+                   FOR UPDATE OF ci
+                """, (rs, rowNum) -> rs.getObject(1, UUID.class), productId);
+        List<UUID> variantIds = jdbcTemplate.query("""
+                SELECT id
+                  FROM product_variants
+                 WHERE product_id = ?
+                 ORDER BY id
+                   FOR UPDATE
+                """, (rs, rowNum) -> rs.getObject(1, UUID.class), productId);
+        ProductOrderReferences orderReferences = productOrderReferences(productId);
+        if (orderReferences.activeReservationCount() > 0) {
+            throw productHasActiveReservation();
+        }
+        if (orderReferences.hasHistory() && !confirmOrderHistory) {
+            throw productHasOrderHistory();
+        }
+
+        int imageCount = count("product_images", "product_id", productId);
+        int collectionLinkCount = count("collection_products", "product_id", productId);
+        int wishlistItemCount = count("wishlist_items", "product_id", productId);
+        int cartItemCount = cartItemIds.size();
+
+        try {
+            if (orderReferences.hasHistory()) {
+                jdbcTemplate.update("""
+                        UPDATE order_items
+                           SET product_id = NULL, variant_id = NULL
+                         WHERE product_id = ?
+                            OR variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                        """, productId, productId);
+                jdbcTemplate.update("""
+                        UPDATE inventory_reservations
+                           SET variant_id = NULL, updated_at = CURRENT_TIMESTAMP
+                         WHERE variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                           AND status <> 'ACTIVE'
+                        """, productId);
+            }
+            jdbcTemplate.update("""
+                    DELETE FROM cart_items
+                     WHERE variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                    """, productId);
+            jdbcTemplate.update("DELETE FROM wishlist_items WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM collection_products WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM product_images WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM product_categories WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM product_species WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM product_variants WHERE product_id = ?", productId);
+            int deleted = jdbcTemplate.update("DELETE FROM products WHERE id = ? AND version = ?", productId, version);
+            if (deleted != 1) {
+                throw optimisticConflict();
+            }
+        } catch (DataIntegrityViolationException | TransientDataAccessException exception) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "PRODUCT_DELETE_CONFLICT",
+                    "상품 참조 데이터가 변경되어 삭제하지 못했습니다.",
+                    "주문·장바구니 상태를 확인하고 화면을 새로고침한 뒤 다시 시도해 주세요."
+            );
+        }
+
+        auditProductDeletion(adminId, target, variantIds.size(), imageCount, collectionLinkCount,
+                cartItemCount, wishlistItemCount, confirmOrderHistory, orderReferences);
+    }
+
+    @Transactional
     public ProductDetail changeProductStatus(UUID productId, String requestedStatus, long version, UUID adminId) {
         String status = requestedStatus.toUpperCase(Locale.ROOT);
         if (!PRODUCT_STATUSES.contains(status)) {
             throw validation("지원하지 않는 상품 상태입니다.");
+        }
+        if (status.equals("PUBLISHED")) {
+            List<String> imageKeys = jdbcTemplate.query(
+                    "SELECT storage_key FROM product_images WHERE product_id = ?",
+                    (rs, rowNum) -> rs.getString(1),
+                    productId
+            );
+            if (imageKeys.isEmpty() || imageKeys.stream().anyMatch(key -> !isValidStoredImage(key))) {
+                throw validation("상품을 공개하려면 업로드가 완료된 이미지가 한 장 이상 필요합니다.");
+            }
         }
         int updated = jdbcTemplate.update("""
                 UPDATE products SET status = ?,
@@ -233,11 +373,13 @@ public class AdminService {
     public HeroSlide updateHeroSlide(UUID slideId, HeroSlideUpdate request, UUID adminId) {
         String status = request.status().toUpperCase(Locale.ROOT);
         String linkType = request.linkType().toUpperCase(Locale.ROOT);
+        String linkValue = request.linkValue().trim();
         if (!Set.of("DRAFT", "PUBLISHED", "HIDDEN").contains(status)
                 || !Set.of("COLLECTION", "PRODUCT", "CONTENT", "HELP").contains(linkType)
                 || request.sortOrder() > 3) {
             throw validation("히어로 공개 상태, 링크 유형 또는 슬롯 순서를 확인해 주세요.");
         }
+        lockProductLinkTarget(linkType, linkValue);
         int updated = jdbcTemplate.update("""
                 UPDATE home_hero_slides
                    SET title = ?, description = ?, image_storage_key = ?, image_alt_text = ?,
@@ -246,7 +388,7 @@ public class AdminService {
                        updated_at = CURRENT_TIMESTAMP, version = version + 1
                  WHERE id = ? AND version = ?
                 """, request.title(), request.description(), request.imageStorageKey(), request.imageAlt(),
-                linkType, request.linkValue(), status, request.sortOrder(), status, slideId, request.version());
+                linkType, linkValue, status, request.sortOrder(), status, slideId, request.version());
         if (updated != 1) {
             throw optimisticConflict();
         }
@@ -409,10 +551,107 @@ public class AdminService {
         if (!PRODUCT_STATUSES.contains(request.status().toUpperCase(Locale.ROOT))) {
             throw validation("지원하지 않는 상품 상태입니다.");
         }
+        if (request.status().equalsIgnoreCase("PUBLISHED")
+                && (request.images() == null || request.images().isEmpty())) {
+            throw validation("상품을 공개하려면 이미지가 한 장 이상 필요합니다.");
+        }
+        if (request.images() != null) {
+            Set<String> storageKeys = new java.util.HashSet<>();
+            for (AdminApiModels.ImageInput image : request.images()) {
+                if (!isCanonicalStorageKey(image.storageKey())) {
+                    throw validation("상품 이미지 저장 경로 형식이 올바르지 않습니다.");
+                }
+                if (!storageKeys.add(image.storageKey())) {
+                    throw validation("같은 이미지를 상품에 두 번 등록할 수 없습니다.");
+                }
+                if (!isValidStoredImage(image.storageKey())) {
+                    throw validation("업로드되지 않았거나 지원하지 않는 상품 이미지가 포함되어 있습니다.");
+                }
+            }
+        }
         if (request.variants().stream().anyMatch(variant ->
                 !VARIANT_STATUSES.contains(variant.status().toUpperCase(Locale.ROOT)))) {
             throw validation("지원하지 않는 옵션 상태가 포함되어 있습니다.");
         }
+    }
+
+    private boolean isValidStoredImage(String storageKey) {
+        return storageService.find(storageKey)
+                .map(stored -> Set.of("image/jpeg", "image/png", "image/webp")
+                        .contains(stored.contentType().toString()))
+                .orElse(false);
+    }
+
+    private boolean isCanonicalStorageKey(String storageKey) {
+        if (storageKey == null || storageKey.isBlank() || storageKey.indexOf('\0') >= 0
+                || storageKey.indexOf('\\') >= 0 || storageKey.startsWith("/")
+                || storageKey.endsWith("/") || storageKey.contains("//")
+                || !SAFE_STORAGE_KEY.matcher(storageKey).matches()) {
+            return false;
+        }
+        try {
+            Path path = Path.of(storageKey);
+            if (path.isAbsolute()) {
+                return false;
+            }
+            for (Path segment : path) {
+                if (segment.toString().equals(".") || segment.toString().equals("..")) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (InvalidPathException exception) {
+            return false;
+        }
+    }
+
+    private ProductOrderReferences productOrderReferences(UUID productId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT
+                    (SELECT count(*)
+                       FROM order_items oi
+                      WHERE oi.product_id = ?
+                         OR oi.variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                    ) AS order_item_count,
+                    (SELECT count(*)
+                       FROM inventory_reservations ir
+                      WHERE ir.variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                    ) AS reservation_count,
+                    (SELECT count(*)
+                       FROM inventory_reservations ir
+                      WHERE ir.variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)
+                        AND ir.status = 'ACTIVE'
+                    ) AS active_reservation_count
+                """, (rs, rowNum) -> new ProductOrderReferences(
+                rs.getInt("order_item_count"),
+                rs.getInt("reservation_count"),
+                rs.getInt("active_reservation_count")
+        ), productId, productId, productId, productId);
+    }
+
+    private boolean hasHomeProductLink(String slug) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM home_hero_slides
+                     WHERE link_type = 'PRODUCT' AND btrim(link_value) = ?
+                    UNION ALL
+                    SELECT 1 FROM home_lifestyle_contents
+                     WHERE link_type = 'PRODUCT' AND btrim(link_value) = ?
+                    UNION ALL
+                    SELECT 1 FROM home_sections
+                     WHERE content ->> 'linkType' = 'PRODUCT'
+                       AND btrim(content ->> 'linkValue') = ?
+                )
+                """, Boolean.class, slug, slug, slug));
+    }
+
+    private int count(String table, String column, UUID value) {
+        // Callers only pass the fixed table and column names declared in this class.
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM " + table + " WHERE " + column + " = ?",
+                Integer.class,
+                value
+        );
     }
 
     private void validateHomeSectionContent(UUID sectionId, String content) {
@@ -449,12 +688,28 @@ public class AdminService {
     private void validateAnnouncementContent(JsonNode root) {
         requiredText(root, "announcementText");
         String linkType = requiredText(root, "linkType");
+        String linkValue = requiredText(root, "linkValue");
         try {
             MerchandisingLinkType.valueOf(linkType);
         } catch (IllegalArgumentException exception) {
             throw validation("공지 링크 유형을 확인해 주세요.");
         }
-        requiredText(root, "linkValue");
+        lockProductLinkTarget(linkType, linkValue);
+    }
+
+    private void lockProductLinkTarget(String linkType, String linkValue) {
+        if (!"PRODUCT".equals(linkType)) {
+            return;
+        }
+        List<UUID> targets = jdbcTemplate.query("""
+                SELECT id
+                  FROM products
+                 WHERE slug = ?
+                   FOR SHARE
+                """, (rs, rowNum) -> rs.getObject(1, UUID.class), linkValue.trim());
+        if (targets.isEmpty()) {
+            throw validation("상품 링크 대상을 찾을 수 없습니다.");
+        }
     }
 
     private void validateServiceGuideContent(JsonNode root) {
@@ -522,6 +777,39 @@ public class AdminService {
                 """, UUID.randomUUID(), adminId, action, resourceType, resourceId, reason);
     }
 
+    private void auditProductDeletion(
+            UUID adminId,
+            ProductDeletionTarget target,
+            int variantCount,
+            int imageCount,
+            int collectionLinkCount,
+            int cartItemCount,
+            int wishlistItemCount,
+            boolean orderHistoryConfirmed,
+            ProductOrderReferences orderReferences
+    ) {
+        jdbcTemplate.update("""
+                INSERT INTO admin_audit_logs (
+                    id, admin_user_id, action, resource_type, resource_id, before_summary, reason
+                ) VALUES (
+                    ?, ?, 'PRODUCT_DELETE', 'PRODUCT', ?,
+                    jsonb_build_object(
+                        'id', ?, 'slug', ?, 'name', ?, 'status', ?, 'version', ?,
+                        'variantCount', ?, 'imageCount', ?, 'collectionLinkCount', ?,
+                        'cartItemCount', ?, 'wishlistItemCount', ?,
+                        'orderHistoryConfirmed', ?, 'orderItemCount', ?,
+                        'reservationCount', ?
+                    ),
+                    ?
+                )
+                """, UUID.randomUUID(), adminId, target.id().toString(), target.id().toString(), target.slug(),
+                target.name(), target.status(), target.version(), variantCount, imageCount, collectionLinkCount,
+                cartItemCount, wishlistItemCount, orderHistoryConfirmed, orderReferences.orderItemCount(),
+                orderReferences.reservationCount(), orderHistoryConfirmed
+                        ? "주문 이력 스냅샷을 보존하고 현재 상품 연결을 분리한 뒤 삭제"
+                        : "주문 이력이 없는 비판매 상품 삭제");
+    }
+
     private PageMetadata page(int page, int size, long total) {
         int totalPages = total == 0 ? 0 : (int) Math.ceil((double) total / size);
         return new PageMetadata(page, size, total, totalPages, page == 0, page + 1 >= totalPages);
@@ -540,6 +828,24 @@ public class AdminService {
                 "화면을 새로고침한 뒤 다시 시도해 주세요.");
     }
 
+    private ApiException productHasOrderHistory() {
+        return new ApiException(
+                HttpStatus.CONFLICT,
+                "PRODUCT_HAS_ORDER_HISTORY",
+                "주문 이력이 있는 상품입니다.",
+                "주문·결제·상품 스냅샷은 유지되지만 현재 상품 연결은 분리됩니다. 계속 삭제하려면 주문 이력 포함 삭제를 한 번 더 확인해 주세요."
+        );
+    }
+
+    private ApiException productHasActiveReservation() {
+        return new ApiException(
+                HttpStatus.CONFLICT,
+                "PRODUCT_HAS_ACTIVE_RESERVATION",
+                "결제 진행 중인 재고 예약이 있어 상품을 삭제할 수 없습니다.",
+                "주문이 결제·취소·만료 처리되어 재고 예약이 종료된 뒤 다시 시도해 주세요."
+        );
+    }
+
     private ApiException notFound(String resource) {
         return new ApiException(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", resource + "을(를) 찾을 수 없습니다.",
                 "식별자와 접근 권한을 확인해 주세요.");
@@ -549,6 +855,19 @@ public class AdminService {
             UUID id, UUID brandId, String slug, String name, String summary, String description,
             String status, boolean featured, long version
     ) {
+    }
+
+    private record ProductDeletionTarget(UUID id, String slug, String name, String status, long version) {
+    }
+
+    private record ProductOrderReferences(
+            int orderItemCount,
+            int reservationCount,
+            int activeReservationCount
+    ) {
+        private boolean hasHistory() {
+            return orderItemCount > 0 || reservationCount > 0;
+        }
     }
 
     private record OrderState(UUID id, String status, long version) {

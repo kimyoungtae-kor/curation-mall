@@ -239,8 +239,29 @@ archive에는 Git 메타데이터가 없으므로 preflight가 경고를 표시�
 - CERTBOT_EMAIL: 인증서 만료 알림을 받을 실제 이메일
 - POSTGRES_PASSWORD: 첫 번째 64자리 random 값
 - GUEST_LOOKUP_TOKEN_SECRET: 두 번째 64자리 random 값
+- MEDIA_HOST_PATH: Git checkout 밖의 상품 이미지 영속 디렉터리. 현재 기준은 `/var/lib/pet-curation/media`
 
 compose 파일은 stage, Secure cookie, 같은 origin CORS, SIMULATED 결제를 고정합니다. .env.deploy에는 이를 중복 기재하지 않습니다.
+
+### 상품 이미지 영속 디렉터리 최초 준비
+
+백엔드 컨테이너는 root가 아닌 고정 UID/GID `10001:10001`로 실행합니다. 업로드 파일이 재배포 때 사라지지 않도록 checkout의 `media`를 쓰기 공간으로 사용하지 않고 전용 호스트 디렉터리를 한 번 준비합니다.
+
+먼저 정확한 대상이 기존 다른 서비스의 폴더가 아닌지 확인합니다.
+
+    sudo ls -ld /var/lib/pet-curation /var/lib/pet-curation/media 2>/dev/null || true
+
+새 전용 경로임을 확인한 뒤에만 다음을 실행합니다.
+
+    sudo install -d -o 10001 -g 10001 -m 0750 /var/lib/pet-curation/media
+    sudo cp -a media/demo /var/lib/pet-curation/media/
+    sudo stat -c 'path=%n owner=%u:%g mode=%a' /var/lib/pet-curation/media
+
+마지막 출력은 `owner=10001:10001`이어야 하고 소유자 권한에 쓰기와 디렉터리 진입 권한이 있어야 합니다. `cp -a media/demo ...`는 전용 저장소 루트의 소유권을 건드리지 않고 기존 자체 제작 데모 하위 디렉터리만 처음 복사하기 위한 명령이며, 업로드 파일을 지우거나 동기화하는 명령이 아닙니다. 디렉터리가 이미 존재하거나 다른 파일이 있다면 전체 경로를 다시 확인하고 멈춥니다. 임의 경로에 `chown -R`을 실행하지 않습니다.
+
+기존 EC2의 `.env.deploy`을 유지하는 업그레이드라면 비밀값을 새로 만들지 말고 다음 한 줄만 추가합니다.
+
+    MEDIA_HOST_PATH=/var/lib/pet-curation/media
 
 비밀 파일이 Git에 보이지 않는지 확인합니다.
 
@@ -255,6 +276,8 @@ Windows에서 생성된 셸 파일은 실행 비트가 없을 수 있으므로 c
 
     bash scripts/deploy/preflight.sh
     bash scripts/deploy/deploy.sh
+
+preflight는 `MEDIA_HOST_PATH`가 절대경로이고 Git checkout 밖의 실제 디렉터리인지, 소유자가 `10001:10001`인지, 소유자 쓰기·진입 권한이 있으며 group·others에는 쓰기 권한이 없는지 확인합니다. 미디어가 위치한 파일시스템의 여유가 2GiB 미만이면 경고합니다. 조건이 다르면 자동으로 소유권을 바꾸지 않고 중단합니다. Compose도 경로가 없을 때 root 소유 폴더를 자동 생성하지 않도록 `create_host_path: false`로 고정했습니다.
 
 deploy.sh는 4 GiB 서버에서 동시에 build하지 않도록 backend를 먼저 build하고 frontend를 다음에 build합니다. 이후 PostgreSQL, backend, frontend를 시작합니다. 첫 실행에는 인증서가 없으므로 proxy는 아직 시작하지 않고 다음 명령을 안내하는 것이 정상입니다.
 
@@ -328,11 +351,20 @@ R__seed_demo_identity.sql과 R__seed_demo_orders.sql은 실행하지 않습니�
 - 장바구니, 회원 주문, 비회원 주문·조회가 됨
 - 결제 화면에 테스트 결제임이 분명함
 - 관리자 로그인과 주문 상태 변경이 됨
+- 관리자 상품 폼에서 PC 파일 선택과 모바일 사진 선택이 열리고 JPEG·PNG·WebP 업로드·미리보기·순서 변경이 됨
+- 잘못된 형식, 8MB 초과 파일과 픽셀 제한 초과 이미지가 저장되지 않고 이해할 수 있는 오류로 표시됨
 - 브라우저 Console과 Network에 반복 4xx/5xx가 없음
+
+업로드 뒤 컨테이너 내부와 호스트가 같은 파일을 보는지 확인합니다.
+
+    docker compose --env-file .env.deploy -f infra/compose.deploy.yaml exec -T backend sh -c 'test -w /srv/media && find /srv/media/uploads -maxdepth 5 -type f | head'
+    sudo find /var/lib/pet-curation/media/uploads -maxdepth 5 -type f | head
+
+백엔드를 재생성한 뒤에도 관리자에서 올린 이미지 URL이 열리는지 확인해야 영속성 검증이 끝납니다. 현재 Nginx와 Spring multipart 요청 한도는 10MB이며 애플리케이션 파일 한도는 8MB입니다.
 
 전체 수동 QA는 09_FUNCTIONAL_QA_CHECKLIST.md를 이어서 사용합니다.
 
-## 12. DB 백업과 안전한 복구 연습
+## 12. DB·미디어 백업과 안전한 복구 연습
 
 백업:
 
@@ -340,6 +372,15 @@ R__seed_demo_identity.sql과 R__seed_demo_orders.sql은 실행하지 않습니�
     ls -lh backups/postgres
 
 스크립트는 custom format dump와 SHA-256 파일을 만들며 기존 백업을 자동 삭제하지 않습니다. 같은 EBS 안의 파일만으로는 서버 장애에 대비할 수 없으므로 내 컴퓨터나 S3 같은 별도 위치로 복사합니다.
+
+상품 DB에는 파일 자체가 아니라 `storage_key`만 있으므로 미디어 디렉터리도 같은 배포 시점에 별도 백업해야 합니다. 다음은 파일을 지우거나 원본을 변경하지 않고 압축본과 체크섬을 만드는 예입니다.
+
+    media_backup_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    sudo tar -C /var/lib/pet-curation -czf "/home/ubuntu/pet-curation-media-${media_backup_stamp}.tar.gz" media
+    sudo chown ubuntu:ubuntu "/home/ubuntu/pet-curation-media-${media_backup_stamp}.tar.gz"
+    sha256sum "/home/ubuntu/pet-curation-media-${media_backup_stamp}.tar.gz" > "/home/ubuntu/pet-curation-media-${media_backup_stamp}.tar.gz.sha256"
+
+이 압축 파일과 체크섬도 DB dump와 함께 EC2 밖으로 복사합니다. 다른 운영 계정을 사용한다면 `/home/ubuntu`와 소유자명을 실제 배포 계정에 맞게 바꿉니다. 복구 연습은 운영 경로에 바로 덮어쓰지 말고 별도 임시 디렉터리에 압축을 풀어 파일 수·체크섬·대표 이미지 조회를 확인합니다.
 
 로컬 PC에서 복사하는 예:
 
@@ -394,7 +435,7 @@ standalone 방식은 포트 80을 사용해야 해서 proxy가 잠시 중지됩�
     git switch --detach PREVIOUS_TESTED_COMMIT
     bash scripts/deploy/deploy.sh
 
-단, Flyway migration은 자동으로 과거로 돌아가지 않습니다. 새 migration이 이전 애플리케이션과 호환되지 않으면 애플리케이션만 되돌리지 말고 백업·복구 계획을 먼저 세웁니다. postgres_data와 letsencrypt 볼륨을 지우지 않습니다.
+단, Flyway migration은 자동으로 과거로 돌아가지 않습니다. 새 migration이 이전 애플리케이션과 호환되지 않으면 애플리케이션만 되돌리지 말고 백업·복구 계획을 먼저 세웁니다. postgres_data와 letsencrypt 볼륨, `MEDIA_HOST_PATH`의 업로드 파일을 지우지 않습니다.
 
 ## 15. 비용과 작은 서버 운영 주의
 
@@ -422,8 +463,9 @@ standalone 방식은 포트 80을 사용해야 해서 proxy가 잠시 중지됩�
 - git remote/push 또는 안전한 archive 전송이 준비되지 않음
 - DNS가 EIP를 가리키지 않음
 - .env.deploy이 Git에 추적됨
+- `MEDIA_HOST_PATH`가 Git checkout 안이거나 `/`, 심볼릭 링크, 다른 서비스의 디렉터리이거나 `10001:10001` 소유가 아님
 - local profile 또는 실제 결제로 실행하려고 함
 - 백업 없이 DB migration이나 복구를 진행하려고 함
 - 5432, 8080, 3000을 공인 인터넷에 열어야 한다고 판단됨
 
-이 실행서와 스크립트는 정적 검토 대상으로 준비되었습니다. 로컬 Docker는 현재 호스트의 여유 메모리 부족으로 전체 컨테이너 기동 검증을 하지 못했으므로, 실제 EC2 첫 배포에서 preflight, Compose healthcheck, HTTPS healthcheck 결과를 배포 증거로 남겨야 합니다.
+관리자 업로드용 영속 디렉터리·읽기/쓰기 mount 변경은 코드와 설정만 준비됐고 기존 stage에는 아직 적용하지 않았습니다. 로컬 Docker는 현재 호스트의 여유 메모리 부족으로 전체 컨테이너 기동 검증을 하지 못했으므로, 실제 EC2 다음 배포에서 preflight, Compose healthcheck, HTTPS healthcheck, 이미지 업로드와 재생성 후 조회 결과를 배포 증거로 남겨야 합니다.

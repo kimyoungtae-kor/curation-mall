@@ -440,13 +440,13 @@ POST /api/v1/payments/webhooks/{provider}
 ### 필수 기능
 
 - 상품 기본정보·분류·옵션·가격·재고·판매상태 CRUD
-- 기존 이미지 메타데이터와 저장 키 편집
+- PC 파일 선택기·모바일 사진 선택기를 이용한 이미지 업로드와 미리보기·대체 텍스트·대표 순서 편집
 - 히어로 최대 3장과 고정 홈 슬롯 관리
 - 주문 검색·상세·결제 확인
 - 허용된 주문 상태 전이
 - 회원 기본 목록과 주문 연결
 
-관리자 이미지 파일 업로드·삭제, 기획전 CRUD와 분류 CRUD는 이번 로컬 핵심 범위에서 제외하고 Later로 관리한다.
+이미지 물리 삭제와 미참조 파일 자동 정리, 기획전 CRUD와 분류 CRUD는 Later로 관리한다. 이미 서버에 저장된 신뢰 가능한 키의 보조 연결 입력은 유지한다.
 
 자유형 페이지 빌더, 대시보드 차트, 다중 관리자 세부 권한은 만들지 않는다.
 
@@ -456,6 +456,7 @@ POST /api/v1/payments/webhooks/{provider}
 - 숨김·판매 종료 상품으로 새 주문을 만들 수 없다.
 - 잘못된 주문 상태 전이는 API에서 거부된다.
 - 일반 회원이 관리자 URL과 API에 접근할 수 없다.
+- `PUBLISHED` 상품은 실제 저장된 이미지가 한 장 이상이고 업로드 파일은 권한·CSRF·형식·용량·해상도 검증을 통과한다.
 - 이미지 저장소 구현을 교체해도 상품 업무 코드는 바뀌지 않는다.
 
 ## 12. 단계 7 — 기능 동결과 데모 콘텐츠
@@ -629,7 +630,7 @@ docker compose --env-file .env -f .\infra\compose.yaml ps
 .\scripts\dev-backend.ps1
 ```
 
-PowerShell은 현재 폴더 스크립트를 명령 이름만으로 실행하지 않으므로 반드시 `.\`를 붙인다. 이미 `scripts` 폴더로 이동했다면 `.\dev-backend.ps1`을 실행한다. 백엔드는 기본 `http://localhost:8080`, 헬스 확인은 `http://localhost:8080/api/v1/health`다. 첫 기동 때 Flyway V1~V6와 local 반복 seed가 적용된다.
+PowerShell은 현재 폴더 스크립트를 명령 이름만으로 실행하지 않으므로 반드시 `.\`를 붙인다. 이미 `scripts` 폴더로 이동했다면 `.\dev-backend.ps1`을 실행한다. 백엔드는 기본 `http://localhost:8080`, 헬스 확인은 `http://localhost:8080/api/v1/health`다. 첫 기동 때 Flyway V1~V7과 local 반복 seed가 적용된다.
 
 터미널 2를 저장소 루트에 열고 다음을 실행한다.
 
@@ -684,7 +685,7 @@ npm.cmd --prefix .\frontend test -- --run
 npm.cmd --prefix .\frontend run build
 ```
 
-2026-08-14 기준 백엔드 PostgreSQL Testcontainers 56개, 프론트 Vitest 16개 파일·51개와 typecheck·lint·production build가 통과했다.
+기존 백엔드 PostgreSQL Testcontainers 56개가 통과했다. 2026-08-16 이미지 변경은 백엔드 단위 12/12·compile·package, 프론트 Vitest 17개 파일·55개와 typecheck·lint·production build가 통과했다. 새 targeted 통합 15개는 로컬 Docker engine 부재로 Testcontainers context 생성 전에 차단됐으므로 Docker가 가능한 환경에서 다시 실행한다.
 
 ### 18.7 시연과 운영을 혼동하지 않기
 
@@ -692,5 +693,5 @@ npm.cmd --prefix .\frontend run build
 - local/test 데모 계정·비밀번호·비회원 토큰은 운영 비밀정보가 아니지만 다른 환경에서 그대로 사용하면 안 된다.
 - 외부 링크를 열기 전 HTTPS, `Secure` 쿠키, CORS, CSRF, DB 비밀번호, 미디어 영속 경로, 백업·복구를 별도로 확인한다.
 - stage/prod는 32바이트 이상의 `GUEST_LOOKUP_TOKEN_SECRET`을 배포 secret으로 주입해야 하며, 누락 시 백엔드가 fail-fast한다. 기존 주문의 멱등 재응답을 위해 값을 임의로 바꾸지 않는다.
-- 비회원 조회와 로그인 실패 레이트리밋은 아직 구현되지 않았으므로 공개 인터넷 배포 전 보완한다.
-- 관리자 이미지 파일 업로드·기획전/분류 CRUD·회원 상세는 현재 Later다. 관리 화면에서 기존 이미지 저장 키와 홈 콘텐츠만 편집한다.
+- 비회원 조회와 로그인 실패는 stage Nginx에서 우선 속도 제한하며 애플리케이션 계층 제한은 Later다.
+- 관리자 이미지 업로드는 구현됐고 물리 삭제·고아 정리·R2/S3 전환, 기획전/분류 CRUD·회원 상세는 Later다.

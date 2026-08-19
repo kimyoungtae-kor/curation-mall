@@ -10,7 +10,10 @@ deploy_info "Checking the stage deployment environment"
 deploy_require_command git
 deploy_require_command curl
 deploy_require_command openssl
+deploy_require_command realpath
+deploy_require_command stat
 deploy_validate_environment
+deploy_validate_media_storage
 deploy_require_compose
 deploy_assert_services
 
@@ -27,6 +30,10 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 
   free_kib="$(df -Pk "${DEPLOY_REPO_ROOT}" | awk 'NR == 2 {print $4}')"
   (( free_kib >= 8388608 )) || deploy_warn "Less than 8 GiB disk space is free. Builds and backups may fill EBS."
+
+  media_free_kib="$(df -Pk "$(deploy_read_env MEDIA_HOST_PATH)" | awk 'NR == 2 {print $4}')"
+  (( media_free_kib >= 2097152 )) \
+    || deploy_warn "Less than 2 GiB is free on the persistent media filesystem. Image uploads may fill it."
 fi
 
 for required_media in \

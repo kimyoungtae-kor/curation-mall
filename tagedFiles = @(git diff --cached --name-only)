@@ -1,0 +1,83 @@
+warning: in the working copy of '.env.deploy.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/Dockerfile', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/admin/api/AdminApiModels.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/admin/api/AdminController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/admin/application/AdminService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/common/api/GlobalExceptionHandler.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/common/storage/FileSystemStorageService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/common/storage/StorageConfiguration.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/kr/co/petcuration/common/storage/StorageService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/application.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/test/java/kr/co/petcuration/AdminApiIntegrationTests.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/test/java/kr/co/petcuration/common/storage/FileSystemStorageServiceTests.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/01_PRODUCT_SCOPE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/02_SCREEN_MAP.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/03_ARCHITECTURE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/04_DATABASE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/05_ROADMAP.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/06_DEPLOYMENT_CHECKLIST.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/07_EXECUTION_PLAYBOOK.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/08_API_CONTRACT.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/09_FUNCTIONAL_QA_CHECKLIST.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/10_EC2_DEPLOYMENT_RUNBOOK.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/DECISIONS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/app/admin/admin.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/app/globals.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/site-header.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/admin-login.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/admin-shell.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/api.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/product-editor-model.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/product-editor-model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/product-editor.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/admin/types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/lib/api/client.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/lib/api/client.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'infra/compose.deploy.yaml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'media/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/deploy/common.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/deploy/preflight.sh', LF will be replaced by CRLF the next time Git touches it
+ .env.deploy.example                                |   4 [32m+[m
+ .gitignore                                         |   4 [32m+[m
+ README.md                                          |   2 [32m+[m[31m-[m
+ backend/Dockerfile                                 |   9 [32m+[m[31m-[m
+ .../co/petcuration/admin/api/AdminApiModels.java   |  12 [32m+[m[31m-[m
+ .../co/petcuration/admin/api/AdminController.java  |  13 [32m+[m
+ .../admin/application/AdminService.java            | 325 [32m+++++++++++++++++[m[31m-[m
+ .../common/api/GlobalExceptionHandler.java         |  32 [32m++[m
+ .../common/storage/FileSystemStorageService.java   | 106 [32m++++++[m
+ .../common/storage/StorageConfiguration.java       |   2 [32m+[m[31m-[m
+ .../petcuration/common/storage/StorageService.java |   3 [32m+[m
+ backend/src/main/resources/application.yml         |  10 [32m+[m
+ .../co/petcuration/AdminApiIntegrationTests.java   |  86 [32m+++++[m
+ .../storage/FileSystemStorageServiceTests.java     |  62 [32m++++[m
+ docs/01_PRODUCT_SCOPE.md                           |  23 [32m+[m[31m-[m
+ docs/02_SCREEN_MAP.md                              |  38 [32m++[m[31m-[m
+ docs/03_ARCHITECTURE.md                            |  36 [32m+[m[31m-[m
+ docs/04_DATABASE.md                                |  34 [32m+[m[31m-[m
+ docs/05_ROADMAP.md                                 |  15 [32m+[m[31m-[m
+ docs/06_DEPLOYMENT_CHECKLIST.md                    |   7 [32m+[m[31m-[m
+ docs/07_EXECUTION_PLAYBOOK.md                      |  13 [32m+[m[31m-[m
+ docs/08_API_CONTRACT.md                            |  72 [32m+++[m[31m-[m
+ docs/09_FUNCTIONAL_QA_CHECKLIST.md                 |  36 [32m+[m[31m-[m
+ docs/10_EC2_DEPLOYMENT_RUNBOOK.md                  |  48 [32m++[m[31m-[m
+ docs/DECISIONS.md                                  |  44 [32m++[m[31m-[m
+ frontend/src/app/admin/admin.css                   | 371 [32m+++++++++++++++++++[m[31m--[m
+ frontend/src/app/globals.css                       |  33 [32m+[m[31m-[m
+ frontend/src/components/site-header.tsx            |  15 [32m+[m[31m-[m
+ frontend/src/features/admin/admin-login.tsx        |   9 [32m+[m[31m-[m
+ frontend/src/features/admin/admin-shell.tsx        |   9 [32m+[m[31m-[m
+ frontend/src/features/admin/api.ts                 |  42 [32m++[m[31m-[m
+ .../features/admin/product-editor-model.test.ts    |  30 [32m+[m[31m-[m
+ .../src/features/admin/product-editor-model.ts     |  26 [32m++[m
+ frontend/src/features/admin/product-editor.tsx     | 206 [32m++++++++++[m[31m--[m
+ frontend/src/features/admin/types.ts               |   9 [32m+[m
+ frontend/src/lib/api/client.test.ts                |  89 [32m++++[m[31m-[m
+ frontend/src/lib/api/client.ts                     | 146 [32m+++++++[m[31m-[m
+ infra/compose.deploy.yaml                          |   7 [32m+[m[31m-[m
+ media/README.md                                    |   4 [32m+[m[31m-[m
+ scripts/deploy/common.sh                           |  41 [32m++[m[31m-[m
+ scripts/deploy/preflight.sh                        |   7 [32m+[m
+ 41 files changed, 1883 insertions(+), 197 deletions(-)

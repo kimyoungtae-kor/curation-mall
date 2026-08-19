@@ -16,7 +16,7 @@ PostgreSQL을 기준으로 회원·비회원 구매, 방문자 장바구니 병�
 
 ### 2026-08-13 구현 체크포인트
 
-- V1~V6와 local/test 반복 seed가 구현돼 있다.
+- V1~V7과 local/test 반복 seed가 구현돼 있다.
 - 데모 카탈로그는 상품 24개와 옵션 26개이며, 회원·관리자 계정과 승인 회원 주문·실패 비회원 주문 예시를 포함한다.
 - 주문 생성·결제 확인은 각각 요청 해시와 멱등성 키를 기록한다. 동일 장바구니 행은 행 잠금과 V6 부분 고유 인덱스로 한 주문에서만 소비하며, 결제 성공은 예약을 `COMMITTED`, 실패는 `RELEASED`, 만료는 `EXPIRED`로 한 번만 전이한다.
 - `admin_audit_logs`는 관리자 상품·재고·주문·홈 변경의 수행자와 대상·요약을 기록한다. request ID와 완전한 전후 diff 고도화는 Later다.
@@ -47,9 +47,10 @@ erDiagram
 
     USERS o|--o{ ORDERS : places
     ORDERS ||--|{ ORDER_ITEMS : contains
+    PRODUCTS o|--o{ ORDER_ITEMS : historically_references
     PRODUCT_VARIANTS o|--o{ ORDER_ITEMS : references
     ORDERS ||--o{ INVENTORY_RESERVATIONS : holds
-    PRODUCT_VARIANTS ||--o{ INVENTORY_RESERVATIONS : reserves
+    PRODUCT_VARIANTS o|--o{ INVENTORY_RESERVATIONS : reserves
     ORDERS ||--o{ PAYMENTS : paid_by
     PAYMENTS ||--o{ PAYMENT_IDEMPOTENCY_RECORDS : deduplicates
     PAYMENTS ||--o{ PAYMENT_EVENTS : receives
@@ -158,7 +159,7 @@ version     bigint not null default 0   -- 동시 수정 제어가 필요한 테
 
 UUID는 서버에서 생성한다. 외부 고객에게는 주문 PK 대신 사람이 읽을 수 있으면서 추측하기 어려운 `order_number`를 노출한다. `order_number`는 전역 고유 제약을 둔다.
 
-상품, 회원처럼 운영상 복구 가능성이 필요한 데이터는 즉시 물리 삭제하지 않고 `status`, `deleted_at` 등으로 비활성화한다. 주문·결제·감사 데이터는 일반 관리자 기능에서 물리 삭제하지 않는다.
+상품과 회원은 상태 변경으로 비활성화하는 것을 우선한다. 단, 상품은 공개 중이 아니고 홈 직접 연결·활성 재고 예약이 없는 경우에 한해 최신 `version`을 확인하고 종속 카탈로그·고객 임시 데이터를 트랜잭션으로 물리 삭제할 수 있다. 주문 이력이 있으면 별도 추가 확인 후 현재 상품 FK만 분리하고 주문·결제·스냅샷은 보존한다. 주문·결제·감사 데이터는 일반 관리자 기능에서 물리 삭제하지 않는다.
 
 ## 4. 회원과 권한
 
@@ -208,6 +209,8 @@ UUID는 서버에서 생성한다. 외부 고객에게는 주문 PK 대신 사�
 | `collections` | 상황·테마별 기획전 |
 | `collection_products` | 기획전 상품과 노출 순서 |
 
+관리자 이미지 업로드를 추가해도 바이너리는 PostgreSQL에 저장하지 않는다. 업로드 API가 반환한 서버 생성 키를 기존 `product_images.storage_key`에 넣고 대체 텍스트와 노출 순서만 함께 관리하므로 이번 변경에는 Flyway 마이그레이션이 없다. 상품 저장 전에 업로드됐지만 연결되지 않은 파일은 DB 행이 없는 고아 파일이 될 수 있어, 참조 확인과 보존 기간을 갖춘 정리 작업을 Later로 둔다.
+
 강아지·고양이를 코드 enum이나 상품의 단일 문자열로 고정하지 않는다. `species` 테이블을 사용해야 희귀동물 확장 시 스키마 변경 없이 추가할 수 있다.
 
 `products.attributes jsonb`는 재질, 권장 체중, 케이지 호환 규격처럼 종·카테고리별로 달라지는 보조 속성에만 사용한다. 가격, 재고, SKU, 주문 상태처럼 정합성이 중요한 값은 일반 컬럼과 관계 테이블로 관리한다.
@@ -218,9 +221,26 @@ UUID는 서버에서 생성한다. 외부 고객에게는 주문 PK 대신 사�
 - `price >= 0`
 - `stock_quantity >= 0`
 - 옵션 조합은 해당 상품 내에서 고유
-- 품절·단종 옵션도 기존 주문 참조를 위해 물리 삭제하지 않음
+- 일반 상품 수정에서는 품절·단종 옵션을 기존 주문 추적을 위해 물리 삭제하지 않음. 상품 전체 삭제의 별도 추가 확인 흐름만 V7의 nullable FK·스냅샷 보존 규칙을 적용
 
 주문 생성의 재고 차감은 조건부 갱신과 트랜잭션으로 보호하고, 관리자 상품 전체 수정·옵션 재고 수정은 각 상품·옵션의 `version` 낙관적 잠금을 사용한다. 오래된 옵션 version이나 다른 상품의 옵션 ID는 `409 OPTIMISTIC_LOCK_CONFLICT`로 거절한다.
+
+### 상품 삭제 정책
+
+관리자 상품 삭제는 `products.version`을 조건에 포함한 단일 트랜잭션으로 실행하며 다음 순서를 따른다.
+
+1. 대상 상품이 존재하고 요청 `version`과 일치하는지 확인한다.
+2. `PUBLISHED`이면 삭제하지 않고 먼저 `HIDDEN` 또는 `DISCONTINUED`로 바꾸도록 안내한다.
+3. 주문 상품 또는 재고 예약 이력이 있고 `confirmOrderHistory=false`이면 `409 PRODUCT_HAS_ORDER_HISTORY`로 중단해 별도 추가 확인을 요구한다.
+4. `confirmOrderHistory=true`여도 대상 옵션의 `ACTIVE` 재고 예약이 있으면 결제 실패·만료 시 재고 복원에 필요하므로 `409 PRODUCT_HAS_ACTIVE_RESERVATION`으로 중단한다.
+5. `home_hero_slides`, `home_lifestyle_contents`, `ANNOUNCEMENT_HEADER`의 홈 섹션 JSON이 `PRODUCT` 유형과 상품 slug로 직접 연결되면 깨진 이동을 막기 위해 연결 해제를 안내한다.
+6. 추가 확인을 마친 주문 이력의 `order_items.product_id`, `order_items.variant_id`, 비활성 `inventory_reservations.variant_id`는 V7의 `ON DELETE SET NULL`로 현재 카탈로그 관계만 분리한다. 주문·결제·상품명·브랜드·SKU·옵션·가격·이미지 스냅샷 행은 삭제하지 않는다.
+7. 조건을 통과하면 `collection_products`, 대상 옵션의 `cart_items`, `wishlist_items`, `product_categories`, `product_species`, `product_images` 메타데이터, `product_variants`, `products`를 종속 관계 순서로 삭제한다.
+8. 삭제 감사 로그는 보존한다. `product_images.storage_key`가 가리키는 업로드 파일은 즉시 지우지 않고 참조 확인·보존 기간을 갖춘 고아 정리 작업이 도입될 때 처리한다.
+
+V7은 `order_items.product_id`, `order_items.variant_id`, `inventory_reservations.variant_id`를 nullable로 변경하고 기존 FK를 `ON DELETE SET NULL`로 재정의한다. 기존 마이그레이션을 수정하지 않고 새 Flyway 파일로 순차 적용한다.
+
+동시 주문과 삭제는 장바구니 행 → 옵션 순으로 같은 잠금 순서를 사용한다. 홈 `PRODUCT` 링크 저장은 대상 상품을 `FOR SHARE`, 상품 삭제는 상품을 `FOR NO KEY UPDATE`로 잠가 존재 확인과 삭제 사이에 깨진 직접 링크가 생성되지 않게 한다. 링크 slug는 저장할 때 trim하고 삭제 검사에서는 `btrim`으로 정규화해 비교한다.
 
 ## 6. 장바구니와 찜
 
@@ -308,13 +328,13 @@ WHERE status = 'ACTIVE' AND visitor_id IS NOT NULL;
 
 주문 상품은 반드시 주문 당시 값을 복사한다.
 
-- 현재 V5의 `product_id`, `variant_id`는 데모 카탈로그 추적을 위한 `NOT NULL` 참조
+- V7 이후 `product_id`, `variant_id`는 현재 카탈로그 추적용 nullable 참조이며 상품 삭제 때 `NULL`이 될 수 있음
 - 상품명, 브랜드명, SKU, 옵션 표시명
 - 개당 정상가, 할인액, 최종 단가
 - 수량과 행 합계
 - 대표 이미지의 안정적인 저장 키 또는 주문용 스냅샷 값
 
-상품·옵션이 단종되거나 이름·가격·이미지가 바뀌어도 주문 내역과 영수 금액이 변하지 않아야 한다. `order_items` 화면을 현재 `products` 조인 결과만으로 만들지 않는다.
+상품·옵션이 단종·삭제되거나 이름·가격·이미지가 바뀌어도 주문 내역과 영수 금액이 변하지 않아야 한다. `order_items` 화면을 현재 `products` 조인 결과만으로 만들지 않고 상품명·브랜드·SKU·옵션·가격·이미지 스냅샷을 우선 사용한다.
 
 V6는 `cart_item_id IS NOT NULL`인 `order_items`에 부분 고유 인덱스를 둔다. 주문 생성 시 선택한 장바구니 행을 UUID 순으로 `FOR UPDATE` 잠그고, 주문 저장 뒤 장바구니 삭제 영향 행 수가 요청 수와 같은지 확인해 같은 장바구니 행의 동시 이중 주문을 막는다.
 
@@ -338,7 +358,7 @@ MVP 기본안은 주문 생성 때 옵션 재고를 조건부로 차감하고 �
 
 | 컬럼 | 설명 |
 |---|---|
-| `order_id`, `variant_id` | 예약한 주문과 옵션 |
+| `order_id`, `variant_id` | 예약한 주문과 현재 옵션. V7 이후 삭제된 상품의 비활성 예약은 옵션 참조가 `NULL`일 수 있음 |
 | `quantity` | 예약 수량, 1 이상 |
 | `status` | `ACTIVE`, `COMMITTED`, `RELEASED`, `EXPIRED` |
 | `expires_at` | 결제 대기 만료 시각 |

@@ -16,6 +16,10 @@ spring:
     jdbc:
       initialize-schema: never
     timeout: 30m
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 10MB
 
 server:
   servlet:
@@ -45,6 +49,12 @@ app:
   storage:
     root: ${MEDIA_STORAGE_ROOT:media}
     public-cache-max-age: ${MEDIA_PUBLIC_CACHE_MAX_AGE:1h}
+    image-upload:
+      max-file-size: 8MB
+      max-width: 10000
+      max-height: 10000
+      max-pixels: 40000000
+      output-max-edge: 1600
   payment:
     simulated-enabled: false
   order:

@@ -1,6 +1,6 @@
 # `/api/v1` API 계약
 
-기준일: 2026-08-13
+기준일: 2026-08-20
 상태: 현재 구현 계약. `Later`로 표시한 경로는 아직 제공하지 않음
 
 ## 1. 목적과 적용 범위
@@ -887,11 +887,13 @@ MVP의 모든 업무 API는 `/api/v1` 아래에 둔다. 이 문서에서 경로 
 | `POST` | `/api/v1/admin/products` | 상품·초기 옵션 등록 |
 | `GET` | `/api/v1/admin/products/{productId}` | 관리자 상품 상세 |
 | `PUT` | `/api/v1/admin/products/{productId}` | 상품·옵션 전체 수정 |
+| `DELETE` | `/api/v1/admin/products/{productId}?version={version}&confirmOrderHistory={boolean}` | 조건을 충족한 상품과 종속 DB 데이터 삭제 |
 | `PATCH` | `/api/v1/admin/products/{productId}/status` | 판매·공개 상태 변경 |
 | `PATCH` | `/api/v1/admin/variants/{variantId}/stock` | 옵션 재고와 버전 수정 |
 | `GET` | `/api/v1/admin/brands` | 기존 브랜드 참조 목록 |
 | `GET` | `/api/v1/admin/categories` | 기존 카테고리 참조 목록 |
 | `GET` | `/api/v1/admin/species` | 기존 동물 종 참조 목록 |
+| `POST` | `/api/v1/admin/media/images` | 관리자 상품 이미지 1개 업로드 (`multipart/form-data`) |
 
 상품 목록 query는 현재 `q`, `status`, `page`, `size`를 지원한다. 내부 SKU와 전체 재고는 관리자 응답에 포함할 수 있지만 공급처 비밀정보는 별도 권한 설계 전까지 저장·노출하지 않는다.
 
@@ -937,11 +939,73 @@ MVP의 모든 업무 API는 `/api/v1` 아래에 둔다. 이 문서에서 경로 
 }
 ```
 
-상품 상태는 `DRAFT`, `PUBLISHED`, `HIDDEN`, `DISCONTINUED`다. 주문 이력이 있는 상품·옵션은 물리 삭제하지 않는다.
+상품 상태는 `DRAFT`, `PUBLISHED`, `HIDDEN`, `DISCONTINUED`다. `images[]`는 최대 8개이고 키가 서로 달라야 하며 서버 저장소에 실제 JPEG·PNG·WebP로 존재해야 한다. `PUBLISHED` 상품 생성·수정과 별도 상태 변경은 저장된 이미지가 한 장 이상일 때만 허용한다. 위반은 `400 VALIDATION_ERROR`다. 주문 이력이 있는 상품 삭제는 아래 별도 확인 계약을 따른다.
 
 상품 전체 수정의 최상위 `version`은 상품 행에 적용하고, 기존 `variants[]`의 각 항목은 응답에서 받은 `id`와 `version`을 함께 보내야 한다. 서버는 `id + productId + version`이 모두 일치할 때만 옵션을 갱신하며 오래된 version이나 다른 상품 옵션 ID는 `409 OPTIMISTIC_LOCK_CONFLICT`다. 새 옵션은 `id`와 `version`을 보내지 않는다. 별도 재고 PATCH도 옵션 `version`을 필수로 사용한다.
 
-현재 상품 생성·수정은 이미 존재하는 `storageKey`, `alt`, `sortOrder` 메타데이터를 JSON으로 받는다. `multipart/form-data` 업로드·물리 삭제와 브랜드·카테고리·동물 종 생성·수정 API는 Later다.
+상품 삭제는 응답에서 받은 상품 `version`을 query parameter로 필수 전송한다. `confirmOrderHistory` 기본값은 `false`다.
+
+```text
+DELETE /api/v1/admin/products/8f81c166-9298-4f32-b2a1-34b56e9b4109?version=3&confirmOrderHistory=false
+X-XSRF-TOKEN: ...
+```
+
+삭제 성공은 본문 없는 `204 No Content`이고 `Cache-Control: no-store`를 반환한다. 서버는 삭제 직전에도 다음 조건을 다시 확인하며, 실패하면 상품과 종속 데이터 어느 것도 삭제하지 않는다.
+
+| HTTP | 코드 | 조건·관리자 안내 |
+|---:|---|---|
+| `400` | `VALIDATION_ERROR` | `version`이 없거나 음수인 요청 |
+| `404` | `RESOURCE_NOT_FOUND` | 이미 삭제됐거나 존재하지 않는 상품 |
+| `409` | `OPTIMISTIC_LOCK_CONFLICT` | 다른 관리자가 먼저 수정함. 새로고침 후 다시 판단 |
+| `409` | `PRODUCT_MUST_BE_UNPUBLISHED` | 현재 `PUBLISHED`. 먼저 `HIDDEN` 또는 `DISCONTINUED`로 변경 |
+| `409` | `PRODUCT_HAS_ORDER_HISTORY` | 주문 상품·예약 이력이 있음. 스냅샷 보존과 현재 상품 연결 해제를 별도로 확인한 뒤 `confirmOrderHistory=true`로 재요청 가능 |
+| `409` | `PRODUCT_HAS_ACTIVE_RESERVATION` | 결제 대기 중 활성 예약의 재고 복원이 끝나지 않아 추가 확인 후에도 삭제 불가 |
+| `409` | `PRODUCT_IN_USE` | 히어로·라이프스타일·공지 헤더의 `PRODUCT` 직접 링크를 먼저 변경·해제 |
+| `409` | `PRODUCT_DELETE_CONFLICT` | 검사 뒤 참조 데이터가 바뀜. 새로고침해 상태를 다시 확인 |
+
+주문 이력이 있는 첫 요청은 상품을 변경하지 않는다. 관리 화면이 주문·결제·상품명·SKU·옵션·가격·이미지 스냅샷은 유지되고 현재 상품 상세 연결만 해제된다는 경고를 별도로 표시한 뒤 관리자가 승인하면 같은 `version`과 `confirmOrderHistory=true`로 재요청한다. 단, `ACTIVE` 재고 예약은 결제 실패·만료 처리 때 현재 옵션 재고를 복원해야 하므로 항상 차단한다.
+
+조건을 통과하면 V7의 nullable `ON DELETE SET NULL` FK로 `order_items.product_id`, `order_items.variant_id`, 비활성 `inventory_reservations.variant_id`의 현재 카탈로그 연결을 분리한다. 같은 트랜잭션에서 대상 옵션의 장바구니 항목, 회원 찜, 기획전 연결, 이미지 메타데이터, 분류·동물 종 연결과 옵션을 제거한 뒤 상품을 삭제하고 `PRODUCT_DELETE` 감사 로그를 남긴다. 업로드 이미지 파일 자체는 삭제하지 않으며 안전한 고아 정리 작업은 Later다. 모든 관리자 삭제 요청에는 기존 관리자 API와 동일하게 `ADMIN` 권한과 유효한 CSRF 토큰이 필요하다.
+
+상품 생성·수정의 `images[]`는 업로드 API가 반환한 `storageKey`, 관리자가 입력한 `alt`, `sortOrder` 메타데이터를 JSON으로 받는다. 이미지 업로드 요청은 `ADMIN` 권한과 유효한 CSRF 토큰이 필요하며, `Content-Type: multipart/form-data`의 `file` 필드에 파일 하나만 보낸다. 여러 파일을 선택한 관리 화면도 각 파일을 별도 요청으로 전송한다.
+
+요청 예시:
+
+```text
+POST /api/v1/admin/media/images
+Content-Type: multipart/form-data; boundary=...
+
+file=<binary>
+```
+
+성공은 `201`이고 응답은 다음과 같다.
+
+```json
+{
+  "data": {
+    "storageKey": "uploads/products/2026/08/0f7045da-5a93-4c58-a296-2d42bf9a7447.webp",
+    "url": "/media/uploads/products/2026/08/0f7045da-5a93-4c58-a296-2d42bf9a7447.webp",
+    "contentType": "image/webp",
+    "sizeBytes": 483221,
+    "width": 1200,
+    "height": 1200
+  }
+}
+```
+
+허용 형식은 JPEG·PNG·정지 WebP, 파일당 최대 8MB, 가로·세로 각각 최대 10,000px, 전체 최대 40,000,000픽셀이며 요청 전체 한도는 10MB다. `accept`와 클라이언트 MIME은 선택 보조 정보일 뿐 서버가 실제 파일 형식과 해상도를 다시 검사한다. JPEG·PNG는 EXIF 방향을 반영하고 긴 변 최대 1600px로 축소·재인코딩한다. WebP는 메타데이터·애니메이션·알 수 없는 chunk가 없는 검증된 원본 바이트만 저장한다. HEIC/HEIF와 GIF는 현재 `415 UNSUPPORTED_IMAGE_FORMAT`이다.
+
+| HTTP | code | 의미 |
+|---:|---|---|
+| `400` | `IMAGE_REQUIRED` | `file` 필드가 없거나 비어 있음 |
+| `400` | `INVALID_IMAGE` | 이미지 디코딩 또는 내용 검증 실패 |
+| `413` | `IMAGE_FILE_TOO_LARGE` | 파일당 허용 용량 초과 |
+| `413` | `IMAGE_DIMENSIONS_EXCEEDED` | 허용 픽셀 크기 초과 |
+| `415` | `UNSUPPORTED_IMAGE_FORMAT` | JPEG·PNG·WebP가 아닌 형식 |
+| `415` | `IMAGE_CONTENT_TYPE_MISMATCH` | 선언된 MIME과 실제 이미지 형식 불일치 |
+| `500` | `MEDIA_STORAGE_FAILED` | 검증 후 영속 저장 실패 |
+
+관리 화면은 파일을 먼저 업로드하고 성공 응답의 키를 상품 생성·수정 JSON에 넣는다. 폼 취소나 상품 저장 실패로 아직 참조되지 않은 파일이 남을 수 있다. 현재 업로드 이미지 파일 물리 삭제 API는 제공하지 않으며 상품에서 이미지 연결을 제거하거나 상품 자체를 삭제해도 파일을 즉시 삭제하지 않는다. 참조 확인·보존 기간·재시도를 포함한 고아 파일 정리는 Later다. 브랜드·카테고리·동물 종 생성·수정 API도 Later다.
 
 ### 8.3 기획전·홈 섹션
 
@@ -1095,4 +1159,4 @@ ACTIVE -> EXPIRED     20분 만료, 재고 한 번 복원
 12. 관리자 옵션 version 충돌과 홈 섹션별 JSON 스키마 검증
 13. 관리자 로그인·병합의 방문자 데이터 비소비, 이메일 길이와 안전한 로그인 `next` 검증
 
-아직 이 계약의 완료 조건으로 남은 항목은 자동 생성 OpenAPI, 외부 HTTPS 환경 E2E, 비회원 조회·로그인 레이트리밋, 실PG·웹훅 중복/서명 검증, 이미지 업로드, 관리자 기획전·분류 CRUD다. 이들은 현재 제공되는 API처럼 문서화하지 않고 Later로 구분한다.
+아직 이 계약의 완료 조건으로 남은 항목은 자동 생성 OpenAPI, 새 이미지 업로드의 외부 HTTPS 환경 E2E, 비회원 조회·로그인 레이트리밋, 실PG·웹훅 중복/서명 검증, 업로드 이미지 파일 물리 삭제·고아 정리, 관리자 기획전·분류 CRUD다. 구현되지 않은 항목은 현재 제공되는 API처럼 문서화하지 않고 Later로 구분한다.

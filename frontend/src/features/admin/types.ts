@@ -36,6 +36,15 @@ export type AdminImage = {
   sortOrder: number;
 };
 
+export type AdminMediaUpload = {
+  storageKey: string;
+  url: string;
+  contentType: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+};
+
 export type AdminProductDetail = {
   id: string;
   brandId: string;

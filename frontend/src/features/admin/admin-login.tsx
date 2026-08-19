@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { login, logout as logoutRequest } from "@/features/account/api";
 import { useAuth } from "@/features/account/auth-provider";
+import { AdminBrand } from "./admin-brand";
 import { adminErrorMessage } from "./error";
 
 export function AdminLogin() {
@@ -44,13 +45,7 @@ export function AdminLogin() {
   return (
     <main className="admin-login-page">
       <section className="admin-login-panel">
-        <Link className="admin-brand admin-brand--login" href="/">
-          <span aria-hidden="true">P</span>
-          <div>
-            <strong>PET CURATION</strong>
-            <small>ADMIN CONSOLE</small>
-          </div>
-        </Link>
+        <AdminBrand login />
         <p className="admin-kicker">SECURE SIGN IN</p>
         <h1>관리자 로그인</h1>
         <p>등록된 관리자 계정으로 로그인해 주세요.</p>

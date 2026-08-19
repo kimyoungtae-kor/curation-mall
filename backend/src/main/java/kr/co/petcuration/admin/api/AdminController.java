@@ -30,6 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -85,6 +86,18 @@ public class AdminController {
     ) {
         return noStore(new Envelope<>(adminService.updateProduct(productId, body,
                 actorResolver.resolve(request).userId())));
+    }
+
+    @DeleteMapping("/products/{productId}")
+    ResponseEntity<Void> deleteProduct(
+            @PathVariable UUID productId,
+            @RequestParam(required = false) @Min(0) Long version,
+            @RequestParam(defaultValue = "false") boolean confirmOrderHistory,
+            HttpServletRequest request
+    ) {
+        adminService.deleteProduct(productId, version, confirmOrderHistory,
+                actorResolver.resolve(request).userId());
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 
     @PatchMapping("/products/{productId}/status")

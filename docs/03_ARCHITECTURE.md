@@ -11,18 +11,18 @@
 | 고객·관리자 웹 | Next.js, TypeScript | 화면 렌더링, 사용자 입력, Spring API 호출 |
 | 백엔드 API | Java, Spring Boot | 인증·인가, 업무 규칙, 트랜잭션, 외부 서비스 연동 |
 | 관계형 DB | PostgreSQL | 회원, 상품, 장바구니, 주문, 결제 데이터의 영속화 |
-| 이미지 저장소 | `StorageService` 구현체 | 현재 로컬 파일 조회, 이후 업로드 가능한 R2/S3 구현으로 교체 |
+| 이미지 저장소 | `StorageService` 구현체 | local과 단일 EC2 stage는 파일 조회·업로드, 규모 확대 시 R2/S3 구현으로 교체 |
 | 시연 배포 후보 | AWS EC2 `t3a.medium`, Docker Compose | Nginx HTTPS 아래 Next.js·Spring Boot·PostgreSQL을 단일 호스트에서 격리 실행 |
 
 2026-08-15 현재 저트래픽 포트폴리오 시연 환경은 기존 EC2 한 대를 `t3a.medium`으로 변경해 Docker Compose로 운영하는 안을 선택했다. 이는 실제 판매 운영 확정안이 아니라 stage 배포 후보이며, 외부 HTTPS·백업 복구·자원 사용량을 검증한 뒤 유지 여부를 확정한다.
 
-### 2026-08-13 구현 체크포인트
+### 2026-08-20 구현 체크포인트
 
-- Next.js 고객·관리자 화면과 Spring Boot `/api/v1`, PostgreSQL V1~V6가 연결돼 있다.
+- Next.js 고객·관리자 화면과 Spring Boot `/api/v1`, PostgreSQL V1~V7이 연결돼 있다.
 - Spring Session JDBC, `CUSTOMER`/`ADMIN` 권한, 32바이트 방문자 쿠키의 SHA-256 해시 저장, 고객 로그인 시 방문자 장바구니 병합을 구현했다. 찜은 `CUSTOMER` 전용이며 관리자 로그인은 방문자 데이터를 병합하거나 소비하지 않는다.
 - 주문 생성은 서버 가격 재계산, 멱등성 키, 주문 스냅샷, 20분 재고 예약을 사용한다. 동일 장바구니 행은 주문 생성 중 잠그고 한 주문에서만 소비하며, 결제 승인·실패·만료는 한 번만 재고를 확정 또는 복원한다. 만료 결제의 같은 멱등성 키 재시도도 계속 `409 ORDER_RESERVATION_EXPIRED`다.
 - 결제는 시연용 `SIMULATED` provider만 구현했다. 실제 PG 승인·조회·취소, 웹훅과 조회 실패 레이트리밋은 아직 없다.
-- 관리자 API는 상품·옵션·재고·상태, 주문·상태 전이, 홈 섹션·히어로, 회원 목록 조회까지 구현했다. 상품 전체 수정과 옵션 재고 수정은 각 행의 `version`으로 낙관적 잠금을 적용하고, 홈 JSON은 섹션별 스키마를 검증한다. 이미지 파일 업로드, 기획전·분류 CRUD, 회원 상세는 Later다.
+- 관리자 API는 상품·옵션·재고·상태와 조건부 삭제, 이미지 파일 업로드, 주문·상태 전이, 홈 섹션·히어로, 회원 목록 조회까지 구현한다. 상품 수정·삭제와 옵션 재고 수정은 각 행의 `version`으로 낙관적 잠금을 적용하고, 홈 JSON은 섹션별 스키마를 검증한다. 기획전·분류 CRUD와 회원 상세는 Later다.
 
 ## 2. 전체 구조
 
@@ -127,7 +127,8 @@ Spring Boot -> PostgreSQL :5432
 
 - 외부에는 80·443만 공개하고 3000·8080·5432는 Compose 내부 네트워크에만 둔다.
 - SSH 22는 관리자 현재 공인 IP `/32`로 제한한다.
-- PostgreSQL과 TLS 인증서는 named volume, 데모 미디어는 전용 경로의 읽기 전용 bind mount를 사용한다.
+- PostgreSQL과 TLS 인증서는 named volume을 사용한다. 미디어는 Git checkout 밖의 호스트 전용 경로 `/var/lib/pet-curation/media`를 컨테이너 `/srv/media`에 읽기·쓰기 bind mount하고 DB와 별도로 외부 백업한다.
+- 백엔드는 고정된 비루트 UID/GID `10001:10001`로 실행한다. preflight는 미디어 경로가 절대경로인지, checkout 밖에 있는지, 실제 디렉터리인지, 해당 UID/GID 소유이며 소유자만 쓸 수 있는지를 검사하고 임의의 재귀 `chown`은 수행하지 않는다. Compose도 `create_host_path: false`로 누락된 경로를 root 소유 디렉터리로 자동 생성하지 않는다.
 - stage는 시뮬레이션 결제임을 명시하며 `local` 프로필과 공개된 데모 회원·관리자 seed를 사용하지 않는다.
 - 새 DB에는 Flyway 적용 후 가상 카탈로그·머천다이징 데이터만 수동 적재한다. 관리자는 강한 비밀번호로 직접 가입한 뒤 일회성 역할 변경으로 만든다.
 - 컨테이너 메모리 상한과 로그 회전을 적용하고, 빌드는 4GiB 호스트의 자원 경합을 줄이기 위해 백엔드와 프론트를 순차 실행한다.
@@ -171,19 +172,31 @@ Spring Boot -> PostgreSQL :5432
 
 ## 7. 파일 저장소 추상화
 
-백엔드 업무 코드가 특정 클라우드 SDK에 의존하지 않도록 `StorageService` 경계를 둔다. 현재 인터페이스는 공개 미디어 조회만 제공한다.
+백엔드 업무 코드가 특정 클라우드 SDK에 의존하지 않도록 `StorageService` 경계를 둔다. 공개 미디어 조회와 관리자 이미지 저장은 이 경계를 통과한다.
 
 ```text
 StorageService
-└─ find(storageKey) -> 저장된 미디어 메타데이터와 읽기 리소스
+├─ find(storageKey) -> 저장된 미디어 메타데이터와 읽기 리소스
+└─ store(storageKey, bytes) -> 지정된 키에 검증 완료 바이트를 원자 저장
 ```
 
 구현체는 환경에 따라 선택한다.
 
-- `FileSystemStorageService`: local/test 파일 조회용, 현재 구현
-- 업로드·삭제와 `R2StorageService`/`S3StorageService`: 배포 저장소를 정한 뒤 추가
+- `FileSystemStorageService`: local/test와 단일 EC2 stage의 조회·업로드 구현
+- `R2StorageService`/`S3StorageService`: 다중 서버, 실판매 운영 또는 단일 디스크 장애 위험을 줄여야 할 때 교체
+- 업로드 이미지 파일 물리 삭제 API와 미참조 파일 정리 작업: 상품·홈·기획전 참조 정책과 보존 기간을 정한 뒤 Later로 추가
 
-DB에는 운영체제 파일 경로나 일회성 서명 URL이 아니라 안정적인 `storage_key`를 저장한다. 업로드 시 확장자만 믿지 않고 MIME 유형, 파일 크기, 허용 이미지 형식을 서버에서 검증하며, 파일명은 서버가 생성한다. 상품 삭제와 이미지 물리 삭제는 분리해 참조 중인 파일이 사라지지 않게 한다.
+DB에는 운영체제 파일 경로나 일회성 서명 URL이 아니라 안정적인 `storage_key`를 저장한다. 관리자 웹은 파일을 하나씩 `multipart/form-data`로 보내고 성공 응답의 키를 상품 JSON에 연결한다. `AdminImageUploadService`가 확장자와 클라이언트 MIME만 믿지 않고 실제 이미지 형식, 파일 크기와 픽셀 크기를 검사하고 UUID 기반 키를 만든 뒤, 검증 완료 바이트와 키를 `StorageService.store`에 전달한다. 상품 저장 취소·실패로 미참조 파일이 생길 수 있으므로 상품에서 이미지를 빼더라도 물리 파일을 즉시 삭제하지 않고, 참조 확인과 보존 기간을 갖춘 정리 작업을 별도로 도입한다.
+
+상품 저장 서비스도 전달된 이미지 키가 저장소에 존재하고 허용 MIME으로 조회되는지, 중복되지 않는지 다시 확인한다. 상품당 최대 8장이며 `PUBLISHED` 생성·수정·상태 전환은 이미지 한 장 이상이 없으면 서버에서 거절한다. 접힌 기존 키 입력 UI는 이미 저장된 신뢰 가능한 미디어를 연결하는 보조 수단일 뿐 임의 경로나 외부 URL을 등록할 수 없다.
+
+현재 업로드 한도는 파일당 8MB, 요청당 10MB이며 JPEG·PNG·WebP만 받는다. Nginx와 Spring multipart 요청 한도는 모두 10MB로 맞추고, 상품 폼에서는 최대 8장을 선택해 한 파일씩 최대 2개만 병렬 업로드한다.
+
+JPEG·PNG는 디코딩한 뒤 긴 변 최대 1600px로 축소·재인코딩해 메타데이터를 제거하고 JPEG EXIF 방향을 화면 픽셀에 반영한다. JDK에 기본 WebP 코덱이 없으므로 정지 WebP는 RIFF 구조·단일 payload·크기를 검사한 원본 바이트를 저장하되 EXIF·XMP·ICC·애니메이션 또는 알 수 없는 chunk가 있으면 거절한다. HEIC/HEIF와 움직이는 GIF·WebP는 현재 지원하지 않는다.
+
+관리자 상품 삭제는 프론트의 확인창만 신뢰하지 않고 Spring 서비스의 단일 트랜잭션에서 수행한다. 요청 관리자의 `ADMIN` 역할과 CSRF 토큰, 상품의 최신 `version`을 확인한 뒤 `PUBLISHED` 상태, 홈 콘텐츠의 `PRODUCT` 직접 연결과 활성 재고 예약을 검사한다. 주문 이력이 있는 첫 요청은 `409 PRODUCT_HAS_ORDER_HISTORY`로 별도 확인을 요구하고, 관리자가 `confirmOrderHistory=true`로 재요청한 경우에만 계속한다. V7은 과거 주문·예약에서 현재 상품·옵션 FK를 nullable `ON DELETE SET NULL`로 분리해 주문명·브랜드·SKU·옵션·가격·이미지 스냅샷과 결제 이력을 보존한다. 활성 예약은 향후 결제 실패·만료의 재고 복원에 옵션이 필요하므로 추가 확인 후에도 삭제하지 않는다. 조건을 통과하면 기획전 연결, 장바구니·찜, 옵션·이미지 메타데이터·분류 연결 등 상품 종속 DB 데이터를 먼저 제거하고 상품을 삭제한다. 감사 로그는 남기며 업로드 이미지 파일은 참조 보존·고아 정리 정책이 준비될 때까지 저장소에 유지한다.
+
+주문 생성과 상품 삭제가 서로 다른 순서로 잠금을 잡아 교착하지 않도록 둘 다 장바구니 행 → 상품 옵션 순으로 정렬 잠금한다. 상품 삭제는 상품 행을 `FOR NO KEY UPDATE`로 잡고, 홈의 `PRODUCT` 링크 저장은 trim한 slug의 실제 상품 행을 `FOR SHARE`로 확인한다. 삭제 검사도 저장된 링크 값을 `btrim`해 비교하므로 공백 표기 차이로 직접 연결을 우회할 수 없고, 홈 저장과 삭제가 경쟁해도 존재하지 않는 상품을 새 링크로 남길 수 없다.
 
 ## 8. 환경 설정과 비밀정보
 
@@ -219,11 +232,14 @@ V3__create_merchandising.sql
 V4__create_cart_and_wishlist.sql
 V5__create_orders_and_payments.sql
 V6__harden_commerce_integrity.sql
+V7__allow_product_history_detachment.sql
 ```
 
 `V5`에는 주문, 주문 상품 스냅샷, 재고 예약, 결제, 결제 멱등 기록, 주문 상태 이력, 결제 이벤트 골격, 관리자 감사 로그가 포함된다. 결제 이벤트 테이블은 실PG 웹훅 구현 전의 스키마 경계이며 아직 공개 웹훅 API는 없다.
 
 `V6`는 `order_items.cart_item_id`가 null이 아닐 때만 적용되는 부분 고유 인덱스를 추가해 동일 장바구니 행이 서로 다른 주문에 중복 사용되지 않도록 보강한다.
+
+`V7`은 상품 삭제 뒤에도 과거 주문·결제 이력을 보존할 수 있도록 `order_items.product_id`, `order_items.variant_id`, `inventory_reservations.variant_id`를 nullable로 바꾸고 해당 FK를 `ON DELETE SET NULL`로 재정의한다. 이름·SKU·옵션·가격·이미지는 기존 snapshot 컬럼을 사용하며 주문 상세는 현재 상품 조인에 의존하지 않는다.
 
 ## 10. EC2 stage 배포 검증 항목
 

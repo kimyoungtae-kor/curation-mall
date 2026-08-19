@@ -74,6 +74,7 @@ backend/.mvn/wrapper/maven-wrapper.jar
 
 # Runtime data
 uploads/
+media/uploads/
 data/
 backups/
 *.dump
@@ -87,3 +88,6 @@ backups/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+docs/*.docx
+docs/~$*.docx

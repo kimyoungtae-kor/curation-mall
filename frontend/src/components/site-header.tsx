@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/features/account/auth-provider";
@@ -56,11 +57,15 @@ export function SiteHeader() {
 
   return (
     <header className="site-header">
-      <Link className="site-header__brand" href="/" aria-label="Pet Curation 홈">
-        <span className="site-header__brand-mark" aria-hidden="true">
-          P
-        </span>
-        PET CURATION
+      <Link className="site-header__brand" href="/" aria-label="Zabre 홈">
+        <Image
+          className="site-header__brand-logo"
+          src="/brand/zabre-logo.png"
+          alt=""
+          width={250}
+          height={150}
+          priority
+        />
       </Link>
 
       <nav className="site-header__nav" aria-label="주요 메뉴">
